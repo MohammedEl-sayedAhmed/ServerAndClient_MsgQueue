@@ -50,7 +50,7 @@ int main()
 
     while (isExit == 0){
 
-        sleep(5);
+        //sleep(10);
         // UP QUEUE // 
         key_t upQueue = 100;
 
