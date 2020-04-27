@@ -6,195 +6,115 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
-
-#include <sys/stat.h>
-#include <sys/file.h>
-#include <sys/shm.h>
-#include <signal.h> 
-#include <sys/sem.h>
+#include <signal.h>
 
 ///////   /////////////  \\\\\\/
 ///////   G L O B A L S  \\\\\\/
 ///////   /////////////  \\\\\\/
-int rcvfromServer = 0;
+
 int isExit = 0;
 
 
-struct sharedMemory { 
-
-    char buff[100]; 
-    int clientpid, serverpid; 
-}; 
-
-struct sharedMemory* shmaddr; 
-
-
-             ////                            ///////   
-             ////    S E M A P H O R E S     ///////                     
-             ////                            ///////  
-
-
-/* arg for semctl system calls. */
-union Semun
+struct msgbuff
 {
-    int val;                /* value for SETVAL */
-    struct semid_ds *buf;   /* buffer for IPC_STAT & IPC_SET */
-    ushort *array;          /* array for GETALL & SETALL */
-    struct seminfo *__buf;  /* buffer for IPC_INFO */
-    void *__pad;
+    long mtype;
+    char mtext[256];
 };
-
-int create_sem(int key)
-{
-    union Semun semun;
-
-    int sem = semget(key, 1, 0666|IPC_CREAT);
-
-    if(sem == -1)
-    {
-        perror("Error in create sem");
-        exit(-1);
-    }
-    
-    return sem;
-}
-
-void destroy_sem(int sem)
-{
-    if(semctl(sem, 0, IPC_RMID) == -1)
-    {
-        perror("Error in semctl");
-        exit(-1);
-    }
-}
-
-struct sembuf down(int sem)
-{
-    struct sembuf p_op;
-
-    p_op.sem_num = 0;
-    p_op.sem_op = -1;
-    p_op.sem_flg = !IPC_NOWAIT;
-
-    if(semop(sem, &p_op, 1) == -1)
-    {
-        perror("Error in down()");
-        exit(-1);
-    }
-    return p_op;
-}
-
-struct sembuf up(int sem)
-{
-    struct sembuf v_op;
-
-    v_op.sem_num = 0;
-    v_op.sem_op = 1;
-    v_op.sem_flg = !IPC_NOWAIT;
-
-    if(semop(sem, &v_op, 1) == -1)
-    {
-        perror("Error in up()");
-        exit(-1);
-    }
-    return v_op;
-}
-
-
-void handler(int signum){
-
-    if (signum == SIGUSR2){
-
-        printf("\nThe server has finished processing tha data, NEW DATA IS   = %s\n",shmaddr->buff);
-        rcvfromServer = 1;
-        
-    }
-}
 
 void exitHandler(int signum){
     
     isExit = 1;
 }
-    
 
-        
+
 int main()
 {
     // Client code
-    pid_t cliPID = getpid();
-    int shmid;
-    key_t key = 5000;
 
+    pid_t Clientpid = getpid();
+    key_t msgqidUP;
+    key_t upQueue = 100;
 
-    // S E M A P H O R E S 
-    union Semun semun;
-
-    int sem1 = create_sem(4000);
-
-    struct sembuf DOWNSemapohre;
-    struct sembuf UPSemapohre;
-
-
-             ////                               ///////   
-             ////   S H A R E D M E M O R Y     ///////                     
-             ////                               ///////  
-
-    shmid = shmget(key, sizeof(struct sharedMemory), IPC_CREAT|0644);
-
-    if(shmid == -1){
-        perror("Error in create");
-        exit(-1);
-    }
-
-    else{
-        printf("\nShared memory -- Client ID = %d\n", shmid);
-
-    }
     
-    
-    // attach the Cleint segment to our space
-    shmaddr = (struct sharedMemory*) shmat(shmid, (void *)0, 0);
-      if(shmaddr == -1)
-    {
-        perror("Error in attach in reader");
-        exit(-1);   
-    }
-    printf("\nShared memory -- Client attached at address %x\n", shmaddr);
-
-
-    // declaring the signal used by the client to inform the server that the client has write a msg 
-    // SIGUSR2 >>> Client
-    signal(SIGUSR2, handler);
     signal(SIGINT,exitHandler);
 
-    printf("Enter your message: ");
+    while(isExit == 0){
 
-    while(isExit ==0){
 
-        /// MULTIPLE C L I E N T HANDLING //
+        // UP QUEUE //  --- SEND
+            msgqidUP = msgget(upQueue, IPC_CREAT | 0644); // or msgget(12613, IPC_CREAT | 0644)
+        if(msgqidUP == -1)
+        {
+            perror("Error in create");
+            exit(-1);
+        }
+        printf("msgqid = %d\n", msgqidUP);
+
+        char str[256];
+        printf("Enter your msg : ");
+        scanf("%s",str);
+
+        struct msgbuff message;
+        message.mtype = 7;     	/* arbitrary value */
+        strcpy(message.mtext, str);
+
+        int send_val;
+        message.mtype = Clientpid;
+        send_val = msgsnd(msgqidUP, &message, sizeof(message.mtext), !IPC_NOWAIT);
+
+        if(send_val == -1){
+            perror("Errror in send");
+        }
+
+
+        // DOWN QUEUE // --- RCV
+        key_t msgqidDOWN;
+        key_t downQueue = 200;
+
+        msgqidDOWN = msgget(downQueue, IPC_CREAT | 0644); // or msgget(12613, IPC_CREAT | 0644)
+        if(msgqidDOWN == -1)
+        {
+            perror("Error in create");
+            exit(-1);
+        }
+        printf("msgqid = %d\n", msgqidDOWN);
+
+        int rec_val;
+
+        /* receive all types of messages */
+        rec_val = msgrcv(msgqidDOWN, &message, sizeof(message.mtext), 0, !IPC_NOWAIT);
+
+        if(rec_val == -1)
+            perror("Error in receive");
         
-        DOWNSemapohre = down(sem1);
-        //printf("Enter your message: \n");
-        shmaddr->clientpid = cliPID;
-
-        scanf("%s", shmaddr->buff);
-        kill(shmaddr->serverpid , SIGUSR1);
-
-
-        while (rcvfromServer != 1){}
-        rcvfromServer = 0;
-        UPSemapohre = up(sem1);
-        printf("Enter your message: ");
-      
+        else{
+            if (message.mtype == Clientpid){
+            printf("\nMessage received: %s\n", message.mtext);
+            }
+        }
     }
 
-    // detach client
-    shmdt((void*)shmaddr);
-    // clear resources
-    destroy_sem(sem1);
-    shmctl(shmid, IPC_RMID, NULL);
+    /*// Destroy msg queue
+        printf("Deleting message queue.\n");
+        int rem_msgUP = msgctl(msgqidUP, IPC_RMID, (struct msqid_ds *) 0);
+        int rem_msgDOWN = msgctl(msgqidDOWN, IPC_RMID, (struct msqid_ds *) 0);
+
+        // Making sure of successful deletion
+        if (rem_msgUP == -1) {
+            perror("Error in deleting message queue UP.\n");
+        }
+        else {
+            printf("Message queue deleted successfully.\n");
+        }
+
+        if (rem_msgDOWN == -1) {
+            perror("Error in deleting message queue DOWN.\n");
+        }
+        else {
+            printf("Message queue deleted successfully.\n");
+        }*/
+
     
-    exit(0);
-    
+
     return 0;
 }
